@@ -74,13 +74,13 @@ const (
 )
 
 // Run runs the day end program for all system or for a single contract
-func Run(date, contract *string, manual *bool, tx *sql.Tx) error {
+func Run(date, contract string, manual bool, tx *sql.Tx) error {
 	var err error
 	var dueRentals []ContractScheduleDueRental
-	if *manual {
-		err = mysequel.QueryToStructs(&dueRentals, tx, queries.DueRentalsByContract, *date, *contract)
+	if manual {
+		err = mysequel.QueryToStructs(&dueRentals, tx, queries.DueRentalsByContract, date, contract)
 	} else {
-		err = mysequel.QueryToStructs(&dueRentals, tx, queries.DueRentals, *date)
+		err = mysequel.QueryToStructs(&dueRentals, tx, queries.DueRentals, date)
 	}
 	if err != nil {
 		return err
