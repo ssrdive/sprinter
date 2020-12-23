@@ -112,8 +112,8 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 		// Creating the transaction for day-end program journal entry.
 		tid, err := mysequel.Insert(mysequel.Table{
 			TableName: "transaction",
-			Columns:   []string{"user_id", "datetime", "posting_date", "remark"},
-			Vals:      []interface{}{1, time.Now().Format("2006-01-02 15:04:05"), time.Now().Format("2006-01-02"), fmt.Sprintf("DAY END %d [%d]", rental.ID, rental.ContractID)},
+			Columns:   []string{"user_id", "datetime", "posting_date", "contract_id", "remark"},
+			Vals:      []interface{}{1, time.Now().Format("2006-01-02 15:04:05"), time.Now().Format("2006-01-02"), rental.ContractID, fmt.Sprintf("DAY END %d [%d]", rental.ID, rental.ContractID)},
 			Tx:        tx,
 		})
 		if err != nil {
