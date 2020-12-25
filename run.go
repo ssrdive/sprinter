@@ -165,7 +165,7 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 		*/
 
 		arrears := cF.CapitalArrears + cF.InterestArrears
-		nAge := math.Round(((arrears+rental.Capital+rental.Interest)/cF.Payment)*100) / 100
+		nAge := (arrears + rental.Capital + rental.Interest) / cF.Payment
 		dayEndJEs := []JournalEntry{}
 		if cF.RecoveryStatus == RecoveryStatusActive && nAge <= 0 {
 			dayEndJEs = append(dayEndJEs, interestJEs("Income", rental)...)
