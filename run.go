@@ -113,7 +113,7 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 		tid, err := mysequel.Insert(mysequel.Table{
 			TableName: "transaction",
 			Columns:   []string{"user_id", "datetime", "posting_date", "contract_id", "remark"},
-			Vals:      []interface{}{1, time.Now().Format("2006-01-02 15:04:05"), rental.MonthlyDate, rental.ContractID, fmt.Sprintf("DAY END %d [%d]", rental.ID, rental.ContractID)},
+			Vals:      []interface{}{1, time.Now().Format("2006-01-02 15:04:05"), rental.MonthlyDate[0:10], rental.ContractID, fmt.Sprintf("DAY END %d [%d]", rental.ID, rental.ContractID)},
 			Tx:        tx,
 		})
 		if err != nil {
