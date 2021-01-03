@@ -81,7 +81,8 @@ const (
 )
 
 // Run runs the day end program for all system or for a single contract
-func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, error) {
+func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, time.Duration, error) {
+	start := time.Now()
 	var err error
 	var dueRentals []ContractScheduleDueRental
 	if manual {
@@ -90,7 +91,7 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 		err = mysequel.QueryToStructs(&dueRentals, tx, queries.DueRentals, date)
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	updatedContracts := []UpdatedContract{}
@@ -103,7 +104,7 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 		var cF ContractFinancial
 		err = tx.QueryRow(queries.ContractFinancial, rental.ContractID).Scan(&cF.Active, &cF.RecoveryStatus, &cF.Doubtful, &cF.Payment, &cF.CapitalArrears, &cF.InterestArrears, &cF.CapitalProvisioned, &cF.ScheduleEndDate)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		updatedContract.RecoveryStatus = cF.RecoveryStatus
 		updatedContract.UpdatedRecoveryStatus = cF.RecoveryStatus
@@ -119,7 +120,7 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 				WVals:    []string{strconv.FormatInt(int64(rental.ContractID), 10)},
 			})
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 		}
 
@@ -131,7 +132,7 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 			Tx:        tx,
 		})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		/*
@@ -187,24 +188,24 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 			dayEndJEs = append(dayEndJEs, interestJEs("Income", rental)...)
 			_, err = tx.Exec(queries.UpdateRecoveryStatus, RecoveryStatusArrears, rental.ContractID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			updatedContract.UpdatedRecoveryStatus = RecoveryStatusArrears
 		} else if cF.RecoveryStatus == RecoveryStatusArrears && cF.Doubtful == 1 && nAge >= 6 {
 			var capitalProvision float64
 			err = tx.QueryRow(queries.NplCapitalProvision, rental.ContractID).Scan(&capitalProvision)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			dayEndJEs = append(dayEndJEs, capitalProvisionJEs(capitalProvision)...)
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
 			_, err = tx.Exec(queries.UpdateRecoveryStatus, RecoveryStatusNPL, rental.ContractID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			_, err = tx.Exec(queries.UpdateCapitalProvisioned, capitalProvision, rental.ContractID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			updatedContract.UpdatedRecoveryStatus = RecoveryStatusNPL
 		} else if cF.RecoveryStatus == RecoveryStatusArrears && cF.Doubtful == 1 && nAge < 6 {
@@ -213,18 +214,18 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 			var capitalProvision float64
 			err = tx.QueryRow(queries.NplCapitalProvision, rental.ContractID).Scan(&capitalProvision)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			dayEndJEs = append(dayEndJEs, capitalProvisionJEs(capitalProvision)...)
 			dayEndJEs = append(dayEndJEs, incomeToSuspenseJEs(cF.InterestArrears)...)
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
 			_, err = tx.Exec(queries.UpdateRecoveryDoubtfulStatus, RecoveryStatusNPL, 1, rental.ContractID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			_, err = tx.Exec(queries.UpdateCapitalProvisioned, capitalProvision, rental.ContractID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			updatedContract.UpdatedRecoveryStatus = RecoveryStatusNPL
 		} else if cF.RecoveryStatus == RecoveryStatusArrears && cF.Doubtful == 0 && nAge < 6 {
@@ -233,19 +234,20 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 			var capitalReceivable float64
 			err = tx.QueryRow(queries.CapitalReceivable, rental.ContractID).Scan(&capitalReceivable)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			capitalProvision := math.Round((capitalReceivable-cF.CapitalProvisioned)*100) / 100
 			dayEndJEs = append(dayEndJEs, capitalProvisionJEs(capitalProvision)...)
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
 			_, err = tx.Exec(queries.UpdateCapitalProvisioned, capitalProvision, rental.ContractID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			_, err = tx.Exec(queries.UpdateRecoveryStatus, RecoveryStatusBDP, rental.ContractID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
+			updatedContract.UpdatedRecoveryStatus = RecoveryStatusBDP
 		} else if cF.RecoveryStatus == RecoveryStatusNPL && nAge < 12 {
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
 		} else if cF.RecoveryStatus == RecoveryStatusBDP {
@@ -254,12 +256,12 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 
 		err = issueJournalEntries(tx, tid, dayEndJEs)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		_, err = tx.Exec(queries.UpdateArrears, rental.Capital, rental.Interest, rental.ContractID)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		_, err = mysequel.Update(mysequel.UpdateTable{
@@ -271,11 +273,11 @@ func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, err
 			WVals:    []string{strconv.FormatInt(int64(rental.ID), 10)},
 		})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		updatedContracts = append(updatedContracts, updatedContract)
 	}
-	return updatedContracts, err
+	return updatedContracts, time.Since(start), err
 }
 
 func incomeToSuspenseJEs(interest float64) []JournalEntry {
