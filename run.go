@@ -42,6 +42,13 @@ type JournalEntry struct {
 	Credit  string
 }
 
+// UpdatedContract holds details of updates done
+type UpdatedContract struct {
+	ContractID            int
+	RecoveryStatus        int
+	UpdatedRecoveryStatus int
+}
+
 const (
 	// UnearnedInterestAccount holds account database id
 	UnearnedInterestAccount = 188
@@ -74,7 +81,7 @@ const (
 )
 
 // Run runs the day end program for all system or for a single contract
-func Run(date, contract string, manual bool, tx *sql.Tx) error {
+func Run(date, contract string, manual bool, tx *sql.Tx) ([]UpdatedContract, error) {
 	var err error
 	var dueRentals []ContractScheduleDueRental
 	if manual {
@@ -83,16 +90,23 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 		err = mysequel.QueryToStructs(&dueRentals, tx, queries.DueRentals, date)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	updatedContracts := []UpdatedContract{}
+
 	for _, rental := range dueRentals {
+		updatedContract := UpdatedContract{
+			ContractID: rental.ContractID,
+		}
 		// Obtain active / period over, arrears status, last installment date
 		var cF ContractFinancial
 		err = tx.QueryRow(queries.ContractFinancial, rental.ContractID).Scan(&cF.Active, &cF.RecoveryStatus, &cF.Doubtful, &cF.Payment, &cF.CapitalArrears, &cF.InterestArrears, &cF.CapitalProvisioned, &cF.ScheduleEndDate)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		updatedContract.RecoveryStatus = cF.RecoveryStatus
+		updatedContract.UpdatedRecoveryStatus = cF.RecoveryStatus
 
 		// Change contract active to 0 if the period is over
 		if cF.ScheduleEndDate == rental.MonthlyDate {
@@ -105,7 +119,7 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 				WVals:    []string{strconv.FormatInt(int64(rental.ContractID), 10)},
 			})
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 
@@ -117,7 +131,7 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 			Tx:        tx,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		/*
@@ -173,61 +187,64 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 			dayEndJEs = append(dayEndJEs, interestJEs("Income", rental)...)
 			_, err = tx.Exec(queries.UpdateRecoveryStatus, RecoveryStatusArrears, rental.ContractID)
 			if err != nil {
-				return err
+				return nil, err
 			}
+			updatedContract.UpdatedRecoveryStatus = RecoveryStatusArrears
 		} else if cF.RecoveryStatus == RecoveryStatusArrears && cF.Doubtful == 1 && nAge >= 6 {
 			var capitalProvision float64
 			err = tx.QueryRow(queries.NplCapitalProvision, rental.ContractID).Scan(&capitalProvision)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			dayEndJEs = append(dayEndJEs, capitalProvisionJEs(capitalProvision)...)
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
 			_, err = tx.Exec(queries.UpdateRecoveryStatus, RecoveryStatusNPL, rental.ContractID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			_, err = tx.Exec(queries.UpdateCapitalProvisioned, capitalProvision, rental.ContractID)
 			if err != nil {
-				return err
+				return nil, err
 			}
+			updatedContract.UpdatedRecoveryStatus = RecoveryStatusNPL
 		} else if cF.RecoveryStatus == RecoveryStatusArrears && cF.Doubtful == 1 && nAge < 6 {
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
 		} else if cF.RecoveryStatus == RecoveryStatusArrears && cF.Doubtful == 0 && nAge >= 6 {
 			var capitalProvision float64
 			err = tx.QueryRow(queries.NplCapitalProvision, rental.ContractID).Scan(&capitalProvision)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			dayEndJEs = append(dayEndJEs, capitalProvisionJEs(capitalProvision)...)
 			dayEndJEs = append(dayEndJEs, incomeToSuspenseJEs(cF.InterestArrears)...)
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
 			_, err = tx.Exec(queries.UpdateRecoveryDoubtfulStatus, RecoveryStatusNPL, 1, rental.ContractID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			_, err = tx.Exec(queries.UpdateCapitalProvisioned, capitalProvision, rental.ContractID)
 			if err != nil {
-				return err
+				return nil, err
 			}
+			updatedContract.UpdatedRecoveryStatus = RecoveryStatusNPL
 		} else if cF.RecoveryStatus == RecoveryStatusArrears && cF.Doubtful == 0 && nAge < 6 {
 			dayEndJEs = append(dayEndJEs, interestJEs("Income", rental)...)
 		} else if cF.RecoveryStatus == RecoveryStatusNPL && nAge >= 12 {
 			var capitalReceivable float64
 			err = tx.QueryRow(queries.CapitalReceivable, rental.ContractID).Scan(&capitalReceivable)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			capitalProvision := math.Round((capitalReceivable-cF.CapitalProvisioned)*100) / 100
 			dayEndJEs = append(dayEndJEs, capitalProvisionJEs(capitalProvision)...)
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
 			_, err = tx.Exec(queries.UpdateCapitalProvisioned, capitalProvision, rental.ContractID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			_, err = tx.Exec(queries.UpdateRecoveryStatus, RecoveryStatusBDP, rental.ContractID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		} else if cF.RecoveryStatus == RecoveryStatusNPL && nAge < 12 {
 			dayEndJEs = append(dayEndJEs, interestJEs("Suspense", rental)...)
@@ -237,12 +254,12 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 
 		err = issueJournalEntries(tx, tid, dayEndJEs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		_, err = tx.Exec(queries.UpdateArrears, rental.Capital, rental.Interest, rental.ContractID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		_, err = mysequel.Update(mysequel.UpdateTable{
@@ -254,11 +271,11 @@ func Run(date, contract string, manual bool, tx *sql.Tx) error {
 			WVals:    []string{strconv.FormatInt(int64(rental.ID), 10)},
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
-
+		updatedContracts = append(updatedContracts, updatedContract)
 	}
-	return nil
+	return updatedContracts, err
 }
 
 func incomeToSuspenseJEs(interest float64) []JournalEntry {
